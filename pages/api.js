@@ -12,33 +12,39 @@ import Contract from "web3-eth-contract";
 import Web3 from "web3";
 
 //Set the API endpoint like so...
-const apiEndPoint = "HTTP://127.0.0.1:8545";
+const apiEndPoint = "http://34.100.155.180:8545";
 // Set up multiple endpoints with router for production.
 
 const web3 = new Web3(apiEndPoint);
 Contract.setProvider(apiEndPoint);
 
 // Set up API calls
-const ContractAddress = "0xc2edC08fd8bE4C0e327B19C8577edCF2bae22999";
+const ContractAddress = "0x33F2a5755843920d3B183cCCA594Ed039d887D1A";
 const compiledContract = require("../compiledContract.json");
 const ABI = compiledContract["abi"];
 const myContract = new Contract(ABI, ContractAddress);
 const hexToEvent = {
-  "0x46aefb6c4c70c1593913b0d8f3ff25987bb344f5b361fef5a20cae35ff2bbe84":
+  "0x339f6fe8bf902a0dda530e650c8a3de3f3e329e9fb61c8035822c2d68acb04c3":
     "pointsAllocated",
-  "0x97ff9ddf4b40d9907f04692208f062caaffa52ef7354486e482ad5e0c5655c96":
+  "0xc29117027fb5683fd9adce4683c07052ca12ccc532277f5b8c3039c6735b7f29":
     "userPoints",
-  "0xe18bf1e48e24f90f6c01a701b2a85e9b7dbde20be612d81046eb0d3da3abe4ff":
-    "pointsBurned",
+  "0x12f4285b54ea369a9ebba8573a153d19bd6e7973c2f6c2021e0551d7b03bac2c":
+    "pointsRedeemed",
+  "0x5ebfe9d3e35987a08b09902b37a80285a0f7871ebab17d24cf01904c336bf993":
+    "redeemDetails",
+  "0xc25c39153635e38307a1ea5f18fb182aebb0037838d19ede4d6eddd0ad18822b":
+    "pointsExpired",
+  "0x3f89f2657dfea821783e53be29fbfad773de186e57d2f5620ce98c51a2921b21":
+    "couponModified",
 };
 
 //Setup public-private key pair for encryption.
-const myAccount = "0xc388C5e09964A06684C782C6E8090B5CF50c40EA"; // keys shall be provided. Public key can be shared.
+const myAccount = "0x7F2e4A25452f6B73e0E0F6E5cD0769D43E25FaC4";
 const privateKey =
-  "e23b2d073aa65b8a57d98525ed241c4767afdd5a4048ec064df4a04dff43730c"; // keys shall be provided. Private key should never ever be shared.
+  "0x24d1f2a4e4ab3b3dec3c020897610aee76c1ba273b7555060e2e2d079424b180"; // keys shall be provided. Private key should never ever be shared.
 
 // API request for Earning points. Allocate points to a user like so...
-// parameters include userId(String), points(integer), expiryDate(epoch time integer), refVia(string)
+// parameters include userId(String), points(integer), expiryDate(epoch time integer), refVia(string), refId(string)
 // Returns object
 //   {status: Status code of response. 200 - Success, 500 - Failed.
 //   response: "Success",
@@ -46,8 +52,11 @@ const privateKey =
 //   points: Points allocated to the user with this request. Integer,
 //   couponId: The unique Id of the coupon created,
 //   expiryDate: Expiry date of the created coupon in epoch time. Integer.
-//   refVia: The refVia input saved with the coupon. String.}
-const allocatePoints = async (userId, points, expiryDate, refVia) => {
+//   refVia: The refVia input saved with the coupon. String.
+//   refId: The refId input saved with the coupon. String.}
+const allocatePoints = async (userId, points, expiryDate, refVia, refId) => {
+  refVia = refVia + "&&seperator&&" + refId;
+
   let returnObject = {
     status: 500,
     response: "",
@@ -56,11 +65,13 @@ const allocatePoints = async (userId, points, expiryDate, refVia) => {
     couponId: 0,
     expiryDate: 0,
     refVia: "",
+    refId: "",
   };
   let gas = await myContract.methods
     .allocatePoints(userId, points, expiryDate, refVia)
     .estimateGas({ from: myAccount })
     .then((resp) => {
+      console.log("Gas required ---- ", resp);
       return resp;
     })
     .catch((err) => {
@@ -103,10 +114,12 @@ const allocatePoints = async (userId, points, expiryDate, refVia) => {
             .catch((err) => {
               return "Error fetching expiry date";
             });
-          returnObject.refVia = await myContract.methods
+          await myContract.methods
             .couponIdToRefVia(parseInt(log.topics[3]))
             .call()
             .then((resp) => {
+              returnObject.refVia = resp.split("&&seperator&&")[0];
+              returnObject.refId = resp.split("&&seperator&&")[1];
               return resp;
             })
             .catch((err) => {
@@ -118,30 +131,43 @@ const allocatePoints = async (userId, points, expiryDate, refVia) => {
     .catch((err) => {
       console.log(err);
     });
-  console.log(returnObject);
+
   return returnObject;
 };
 
 // API request for Burning points / redeeming points from a user like so...
-// parameters include userId(string), points(integer)
+// parameters include userId(string), points(integer), refVia(string), refId(string)
 // Returns object
 //   {status: Status code of response. 200 - Success, 500 - Failed.
 //   response: "Success"}
-const redeemPoints = async (userId, points) => {
+const redeemPoints = async (userId, points, refVia, refId) => {
+  refVia = refVia + "&&seperator&&" + refId;
   let returnObject = {
     status: 500,
     response: "",
   };
+  let availablePoints = await getPoints(userId)
+    .then((res) => {
+      return parseInt(res.points);
+    })
+    .catch((err) => {});
+  if (availablePoints < points) {
+    returnObject.response = "Not enough points";
+    return returnObject;
+  }
   let gas = await myContract.methods
-    .redeemUserPoints(userId, points)
+    .redeemUserPoints(userId, points, refVia)
     .estimateGas({ from: myAccount })
     .then((resp) => {
+      console.log("Gas required ---> " + resp);
       return resp;
     })
     .catch((err) => {
       returnObject["response"] = err;
     });
-  let txData = myContract.methods.redeemUserPoints(userId, points).encodeABI();
+  let txData = myContract.methods
+    .redeemUserPoints(userId, points, refVia)
+    .encodeABI();
   let txObject = {
     to: ContractAddress,
     from: myAccount,
@@ -165,7 +191,6 @@ const redeemPoints = async (userId, points) => {
     .catch((err) => {
       console.log(err);
     });
-  console.log(returnObject);
   return returnObject;
 };
 
@@ -223,7 +248,7 @@ const getPoints = async (userId) => {
     .catch((err) => {
       console.log(err);
     });
-  console.log(returnObject);
+
   return returnObject;
 };
 
@@ -237,7 +262,7 @@ const getPoints = async (userId) => {
 //   {userId: User Id as a string,
 //   type: Type of transaction. Earned, Burned, Redeemed or Modified.
 //   points: Points allocated to the user with this request. Integer,
-//   couponId: The unique Id of the coupon included in the transaction.}
+//   couponId: The unique Id of the coupon included in the transaction. OR redeemId and redeemVia in case of redeemed points.}
 const getHistory = async (userIdString) => {
   let returnObject = {
     status: 500,
@@ -255,7 +280,7 @@ const getHistory = async (userIdString) => {
           address: ContractAddress,
         })
         .then((res) => {
-          res.forEach((rec) => {
+          res.forEach(async (rec) => {
             if (parseInt(rec.topics[1]) == userId) {
               let transactionObject = {};
               if (hexToEvent[rec.topics[0]] === "pointsAllocated") {
@@ -276,13 +301,32 @@ const getHistory = async (userIdString) => {
                 transactionObject["couponId"] = parseInt(rec.topics[3]);
                 returnObject.transactionHistory.push(transactionObject);
               }
-              if (hexToEvent[rec.topics[0]] === "pointsRedeemed") {
+              // if (hexToEvent[rec.topics[0]] === "pointsRedeemed") {
+              //   returnObject.status = 200;
+              //   returnObject.response = "Success";
+              //   transactionObject["userId"] = userIdString;
+              //   transactionObject["type"] = "Redeemed";
+              //   transactionObject["points"] = parseInt(rec.topics[2]);
+              //   transactionObject["couponId"] = parseInt(rec.topics[3]);
+              //   returnObject.transactionHistory.push(transactionObject);
+              // }
+              if (hexToEvent[rec.topics[0]] === "redeemDetails") {
                 returnObject.status = 200;
                 returnObject.response = "Success";
                 transactionObject["userId"] = userIdString;
                 transactionObject["type"] = "Redeemed";
                 transactionObject["points"] = parseInt(rec.topics[2]);
-                transactionObject["couponId"] = parseInt(rec.topics[3]);
+                let redeemId = parseInt(rec.topics[3]);
+                await myContract.methods
+                  .redeemIdToRefId(redeemId)
+                  .call()
+                  .then((res) => {
+                    transactionObject["redeemVia"] =
+                      res.split("&&seperator&&")[0];
+                    transactionObject["redeemId"] =
+                      res.split("&&seperator&&")[1];
+                  });
+
                 returnObject.transactionHistory.push(transactionObject);
               }
               if (hexToEvent[rec.topics[0]] === "pointsExpired") {
@@ -305,7 +349,6 @@ const getHistory = async (userIdString) => {
       console.log(err);
     });
 
-  console.log(returnObject);
   return returnObject;
 };
 
@@ -333,7 +376,7 @@ const getMaxSupply = async () => {
     .catch((err) => {
       returnObject.response = "Failed";
     });
-  console.log(returnObject);
+
   return returnObject;
 };
 
@@ -360,7 +403,7 @@ const getCurrentSupply = async () => {
     .catch((err) => {
       returnObject.response = "Failed";
     });
-  console.log(returnObject);
+
   return returnObject;
 };
 
@@ -373,7 +416,8 @@ const getCurrentSupply = async () => {
 //   points: Points assigned in this coupon. Integer,
 //   couponId: The unique Id of the this coupon,
 //   expiry: Expiry date of the coupon in epoch time. Integer.
-//   refVia: The refVia input saved with the coupon. String.}
+//   refVia: The refVia input saved with the coupon. String.
+//   refId: The refId input saved with the coupon. String.}
 const couponDetails = async (couponId) => {
   let returnObject = {
     status: 500,
@@ -383,6 +427,7 @@ const couponDetails = async (couponId) => {
     points: 0,
     expiry: 0,
     refVia: "",
+    refId: "",
   };
   await myContract.methods
     .couponIdToUserId(couponId)
@@ -425,7 +470,8 @@ const couponDetails = async (couponId) => {
     .then((resp) => {
       returnObject.status = 200;
       returnObject.response = "Success";
-      returnObject.refVia = resp;
+      returnObject.refVia = resp.split("&&seperator&&")[0];
+      returnObject.refId = resp.split("&&seperator&&")[1];
     })
     .catch((err) => {
       returnObject.response = "Failed";
@@ -501,6 +547,6 @@ const modifyCoupon = async (couponId, points) => {
     .catch((err) => {
       console.log(err);
     });
-  console.log(returnObject);
+
   return returnObject;
 };

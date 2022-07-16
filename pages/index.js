@@ -1,11 +1,11 @@
 import Contract from "web3-eth-contract";
 import Web3 from "web3";
 
-const web3 = new Web3("HTTP://127.0.0.1:8545");
+const web3 = new Web3("http://34.100.155.180:8545");
 // const web3 = new Web3(
 //   "https://rinkeby.infura.io/v3/af7a38f98bcd4ebbbc7c0c844640104f"
 // );
-Contract.setProvider("HTTP://127.0.0.1:8545");
+Contract.setProvider("http://34.100.155.180:8545");
 // Contract.setProvider(
 //   "https://rinkeby.infura.io/v3/af7a38f98bcd4ebbbc7c0c844640104f"
 // );
@@ -15,12 +15,12 @@ const compiledContract = require("../compiledContract.json");
 const ABI = compiledContract["abi"];
 const myContract = new Contract(ABI, ContractAddress);
 
-const myAccount = "0xc388C5e09964A06684C782C6E8090B5CF50c40EA";
-// const myAccount = "0xE858f0370b101cD3F58E03F18BFA1240a591b5Fa";
+const myAccount = "0x7F2e4A25452f6B73e0E0F6E5cD0769D43E25FaC4";
+// const myAccount = "0x1F2E67EC9fc910278bc8c242348fC4D032Ce036D";
 const privateKey =
-  "e23b2d073aa65b8a57d98525ed241c4767afdd5a4048ec064df4a04dff43730c";
+  "0x24d1f2a4e4ab3b3dec3c020897610aee76c1ba273b7555060e2e2d079424b180";
 // const privateKey =
-//   "b531919a661913eebbbb209a9ac8377ce2c974ba97973e3872a4d2ab9acc5fca";
+//   "41dfe67fe4c975db3bed202eb74c26c052caf8c815712a7150e918b572a876d6";
 
 const hexToEvent = {
   "0x339f6fe8bf902a0dda530e650c8a3de3f3e329e9fb61c8035822c2d68acb04c3":
@@ -29,6 +29,8 @@ const hexToEvent = {
     "userPoints",
   "0x12f4285b54ea369a9ebba8573a153d19bd6e7973c2f6c2021e0551d7b03bac2c":
     "pointsRedeemed",
+  "0x5ebfe9d3e35987a08b09902b37a80285a0f7871ebab17d24cf01904c336bf993":
+    "redeemDetails",
   "0xc25c39153635e38307a1ea5f18fb182aebb0037838d19ede4d6eddd0ad18822b":
     "pointsExpired",
   "0x3f89f2657dfea821783e53be29fbfad773de186e57d2f5620ce98c51a2921b21":
@@ -48,7 +50,9 @@ export default function Home() {
   const [currentSupply, setCurrentSupply] = useState(
     "Total number of points in circulation right now."
   );
-  const allocatePoints = async (userId, points, expiryDate, refVia) => {
+  const allocatePoints = async (userId, points, expiryDate, refVia, refId) => {
+    refVia = refVia + "&&seperator&&" + refId;
+
     let returnObject = {
       status: 500,
       response: "",
@@ -57,6 +61,7 @@ export default function Home() {
       couponId: 0,
       expiryDate: 0,
       refVia: "",
+      refId: "",
     };
     let gas = await myContract.methods
       .allocatePoints(userId, points, expiryDate, refVia)
@@ -66,8 +71,9 @@ export default function Home() {
         return resp;
       })
       .catch((err) => {
+        console.log("here");
         console.log(err);
-        returnObject["response"] = err["data"]["stack"];
+        returnObject["response"] = err["data"];
       });
     let txData = myContract.methods
       .allocatePoints(userId, points, expiryDate, refVia)
@@ -105,10 +111,12 @@ export default function Home() {
               .catch((err) => {
                 return "Error fetching expiry date";
               });
-            returnObject.refVia = await myContract.methods
+            await myContract.methods
               .couponIdToRefVia(parseInt(log.topics[3]))
               .call()
               .then((resp) => {
+                returnObject.refVia = resp.split("&&seperator&&")[0];
+                returnObject.refId = resp.split("&&seperator&&")[1];
                 return resp;
               })
               .catch((err) => {
@@ -235,23 +243,37 @@ export default function Home() {
     return returnObject;
   };
 
-  const redeemPoints = async (userId, points) => {
+  const redeemPoints = async (userId, points, refVia, refId) => {
+    refVia = refVia + "&&seperator&&" + refId;
+    console.log(refVia);
     let returnObject = {
       status: 500,
       response: "",
     };
+    let availablePoints = await getPoints(userId)
+      .then((res) => {
+        return parseInt(res.points);
+      })
+      .catch((err) => {});
+    if (availablePoints < points) {
+      returnObject.response = "Not enough points";
+      return returnObject;
+    }
     let gas = await myContract.methods
-      .redeemUserPoints(userId, points)
+      .redeemUserPoints(userId, points, refVia)
       .estimateGas({ from: myAccount })
       .then((resp) => {
-        console.log('Gas required ---> ' + resp)
+        console.log("Gas required ---> " + resp);
+        console.log(resp);
         return resp;
       })
       .catch((err) => {
+        console.log("here");
+        console.log(err);
         returnObject["response"] = err;
       });
     let txData = myContract.methods
-      .redeemUserPoints(userId, points)
+      .redeemUserPoints(userId, points, refVia)
       .encodeABI();
     let txObject = {
       to: ContractAddress,
@@ -265,7 +287,7 @@ export default function Home() {
         return resp["rawTransaction"];
       })
       .catch((err) => {
-        console.log(err);
+        // console.log(err);
       });
     await web3.eth
       .sendSignedTransaction(rawTx)
@@ -274,9 +296,9 @@ export default function Home() {
         returnObject.status = 200;
       })
       .catch((err) => {
-        console.log(err);
+        // console.log(err);
       });
-    console.log(returnObject);
+    // console.log(returnObject);
     return returnObject;
   };
 
@@ -284,60 +306,85 @@ export default function Home() {
     let returnObject = {
       status: 500,
       response: "",
-      transactionHistory: [],
+      transactionHistory: {},
     };
     await getPoints(userIdString);
-    await myContract.methods
+    return await myContract.methods
       .userStringToId(userIdString)
       .call()
       .then(async (userId) => {
-        await web3.eth
+        return await web3.eth
           .getPastLogs({
             fromBlock: "0x0",
             address: ContractAddress,
           })
-          .then((res) => {
-            res.forEach((rec) => {
+          .then(async (res) => {
+            let recIndex = 0;
+            for (const rec of res) {
               if (parseInt(rec.topics[1]) == userId) {
                 let transactionObject = {};
                 if (hexToEvent[rec.topics[0]] === "pointsAllocated") {
+                  recIndex++;
                   returnObject.status = 200;
                   returnObject.response = "Success";
                   transactionObject["userId"] = userIdString;
                   transactionObject["type"] = "Earned";
                   transactionObject["points"] = parseInt(rec.topics[2]);
                   transactionObject["couponId"] = parseInt(rec.topics[3]);
-                  returnObject.transactionHistory.push(transactionObject);
+                  returnObject.transactionHistory[recIndex] = transactionObject;
                 }
                 if (hexToEvent[rec.topics[0]] === "couponModified") {
+                  recIndex++;
                   returnObject.status = 200;
                   returnObject.response = "Success";
                   transactionObject["userId"] = userIdString;
                   transactionObject["type"] = "Modified";
                   transactionObject["points"] = parseInt(rec.topics[2]);
                   transactionObject["couponId"] = parseInt(rec.topics[3]);
-                  returnObject.transactionHistory.push(transactionObject);
+                  returnObject.transactionHistory[recIndex] = transactionObject;
                 }
-                if (hexToEvent[rec.topics[0]] === "pointsRedeemed") {
+                // if (hexToEvent[rec.topics[0]] === "pointsRedeemed") {
+                //   returnObject.status = 200;
+                //   returnObject.response = "Success";
+                //   transactionObject["userId"] = userIdString;
+                //   transactionObject["type"] = "Redeemed";
+                //   transactionObject["points"] = parseInt(rec.topics[2]);
+                //   transactionObject["couponId"] = parseInt(rec.topics[3]);
+                //   returnObject.transactionHistory.push(transactionObject);
+                // }
+                if (hexToEvent[rec.topics[0]] === "redeemDetails") {
+                  recIndex++;
                   returnObject.status = 200;
                   returnObject.response = "Success";
                   transactionObject["userId"] = userIdString;
                   transactionObject["type"] = "Redeemed";
                   transactionObject["points"] = parseInt(rec.topics[2]);
-                  transactionObject["couponId"] = parseInt(rec.topics[3]);
-                  returnObject.transactionHistory.push(transactionObject);
+                  let redeemId = parseInt(rec.topics[3]);
+                  await myContract.methods
+                    .redeemIdToRefId(redeemId)
+                    .call()
+                    .then((res) => {
+                      transactionObject["redeemVia"] =
+                        res.split("&&seperator&&")[0];
+                      transactionObject["redeemId"] =
+                        res.split("&&seperator&&")[1];
+                    });
+
+                  returnObject.transactionHistory[recIndex] = transactionObject;
                 }
                 if (hexToEvent[rec.topics[0]] === "pointsExpired") {
+                  recIndex++;
                   returnObject.status = 200;
                   returnObject.response = "Success";
                   transactionObject["userId"] = userIdString;
                   transactionObject["type"] = "Expired";
                   transactionObject["points"] = parseInt(rec.topics[2]);
                   transactionObject["couponId"] = parseInt(rec.topics[3]);
-                  returnObject.transactionHistory.push(transactionObject);
+                  returnObject.transactionHistory[recIndex] = transactionObject;
                 }
               }
-            });
+            }
+            return returnObject;
           })
           .catch((err) => {
             console.log(err);
@@ -346,9 +393,6 @@ export default function Home() {
       .catch((err) => {
         console.log(err);
       });
-
-    console.log(returnObject);
-    return returnObject;
   };
 
   const couponDetails = async (couponId) => {
@@ -360,6 +404,7 @@ export default function Home() {
       points: 0,
       expiry: 0,
       refVia: "",
+      refId: "",
     };
     await myContract.methods
       .couponIdToUserId(couponId)
@@ -402,7 +447,8 @@ export default function Home() {
       .then((resp) => {
         returnObject.status = 200;
         returnObject.response = "Success";
-        returnObject.refVia = resp;
+        returnObject.refVia = resp.split("&&seperator&&")[0];
+        returnObject.refId = resp.split("&&seperator&&")[1];
       })
       .catch((err) => {
         returnObject.response = "Failed";
@@ -426,6 +472,7 @@ export default function Home() {
         returnObject.maxSupply = resp;
       })
       .catch((err) => {
+        console.log(err);
         returnObject.response = "Failed";
       });
     console.log(returnObject);
@@ -452,6 +499,28 @@ export default function Home() {
     return returnObject;
   };
 
+  const getBlock = async () => {
+    web3.eth
+      .getBlockNumber()
+      .then((res) => {
+        console.log("response");
+        console.log(res);
+      })
+      .catch((err) => {
+        console.log("error");
+        console.log(err);
+      });
+
+    web3.eth
+      .isSyncing()
+      .then((res) => {
+        console.log(res);
+      })
+      .catch((err) => {
+        console.log(err);
+      });
+  };
+
   return (
     <>
       <h1>{status}</h1>
@@ -466,6 +535,7 @@ export default function Home() {
         <input type="text" placeholder="User ID" id="userId" />
         <input type="number" placeholder="Points" id="points" />
         <input type="text" placeholder="Ref via" id="refVia" />
+        <input type="text" placeholder="Ref id" id="refId" />
         <input type="date" id="expirydate" />
         <input type="time" id="expirytime" />
         <button
@@ -473,6 +543,7 @@ export default function Home() {
             let userId = document.getElementById("userId").value;
             let points = parseInt(document.getElementById("points").value);
             let refVia = document.getElementById("refVia").value;
+            let refId = document.getElementById("refId").value;
             let expirydate = document.getElementById("expirydate").value;
             let expirytime = document.getElementById("expirytime").value;
             let expiry = new Date(
@@ -483,7 +554,8 @@ export default function Home() {
               userId.toString(),
               points,
               epochTime,
-              refVia.toString()
+              refVia.toString(),
+              refId
             );
           }}
         >
@@ -504,11 +576,15 @@ export default function Home() {
       <div>
         <input type="text" placeholder="User ID" id="userId4" />
         <input type="number" placeholder="Points to Redeem" id="points4" />
+        <input type="text" placeholder="Ref ID" id="refId4" />
+        <input type="text" placeholder="Ref Via" id="refVia4" />
         <button
           onClick={() => {
             let userId = document.getElementById("userId4").value;
             let points = parseInt(document.getElementById("points4").value);
-            redeemPoints(userId, points);
+            let refId4 = document.getElementById("refId4").value;
+            let refVia4 = document.getElementById("refVia4").value;
+            redeemPoints(userId, points, refId4, refVia4);
           }}
         >
           Redeem user points
@@ -517,9 +593,15 @@ export default function Home() {
       <div>
         <input type="text" placeholder="User ID" id="userId3" />
         <button
-          onClick={() => {
+          onClick={async () => {
             let userId = document.getElementById("userId3").value;
-            getHistory(userId);
+            let history = await getHistory(userId)
+              .then((res) => {
+                console.log(res);
+              })
+              .catch((err) => {
+                console.log(err);
+              });
           }}
         >
           Get Transaction History
@@ -547,6 +629,47 @@ export default function Home() {
           }}
         >
           Modify Coupon
+        </button>
+        <button
+          onClick={() => {
+            getBlock();
+          }}
+        >
+          Get Block
+        </button>
+        <input type="text" placeholder="string to Id" id="stringToId" />
+        <button
+          onClick={() => {
+            let stringToId = document.getElementById("stringToId").value;
+            myContract.methods
+              .userStringToId(stringToId)
+              .call()
+              .then((res) => {
+                console.log(res);
+              })
+              .catch((err) => {
+                console.log(err);
+              });
+          }}
+        >
+          String To Id
+        </button>
+        <input type="text" placeholder="Id to String" id="IdToString" />
+        <button
+          onClick={() => {
+            let IdToString = document.getElementById("IdToString").value;
+            myContract.methods
+              .userIdToString(IdToString)
+              .call()
+              .then((res) => {
+                console.log(res);
+              })
+              .catch((err) => {
+                console.log(err);
+              });
+          }}
+        >
+          IdToString
         </button>
       </div>
     </>
